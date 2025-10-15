@@ -13,6 +13,8 @@ HDR_MAGIC=b"YAWAV1M"
 PKT_MAGIC=b"KPAY"
 
 BASE=os.path.dirname(os.path.abspath(__file__))
+
+# 모델/라벨 파일이 없을 경우 인터넷에서 다운로드 하는 데 사용되는 변수 설정 (ensure_assets 함수에서 사용)
 MODEL_PATH=os.path.join(BASE,"yamnet.tflite")
 LABELS_PATH=os.path.join(BASE,"yamnet_label_list.txt")
 MODEL_URL="https://storage.googleapis.com/mediapipe-models/audio_classifier/yamnet/float32/1/yamnet.tflite"
@@ -41,13 +43,16 @@ def _is_tflite(p):
         with open(p,"rb") as f: return f.read(4)==b"TFL3"
     except: return False
 
+# 모델/라벨 파일이 없을 경우 인터넷에서 다운로드 함
 def ensure_assets():
     if not _is_tflite(MODEL_PATH):
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
     if not os.path.exists(LABELS_PATH) or os.path.getsize(LABELS_PATH)<5000:
         urllib.request.urlretrieve(LABELS_URL, LABELS_PATH)
 
+# 오디오 데이터를 입력받아 어떤 종류의 소리인지 추론
 class YAMNet:
+    # 모델 파일과 라벨 파일을 로드
     def __init__(self,model=MODEL_PATH,labels=LABELS_PATH):
         ensure_assets()
         self.labels=[l.strip() for l in open(labels,"r",encoding="utf-8")]
@@ -56,6 +61,7 @@ class YAMNet:
         inp=self.interp.get_input_details()[0]; outp=self.interp.get_output_details()[0]
         self.in_idx=inp['index']; self.out_idx=outp['index']
         self.rank=len(inp['shape']); self.need=int(inp['shape'][-1]); self.sr=16000
+    # 오디오 데이터(변수 x)를 입력받아 모델에 입력하고 521가지 소리 각각에 대한 확률 값을 배열(아마도 변수 s) 형태로 반환
     def infer(self,x):
         if len(x)<self.need: x=np.pad(x,(0,self.need-len(x)))
         elif len(x)>self.need: x=x[:self.need]
@@ -71,6 +77,7 @@ def discover_ports(maxn=2):
     ports=ids if ids else devs
     return ports[:maxn]
 
+# 실시간으로 들어오는 오디오 데이터를 순환 버퍼를 저장
 class NpRing:
     def __init__(self, maxlen):
         self.maxlen = int(maxlen)
@@ -78,6 +85,7 @@ class NpRing:
         self.w = 0
         self.filled = 0
         self.lock = threading.Lock()
+    # EPS32-S3로부터 받은 새로운 오디오 데이터 조각을 버퍼의 끝에 추가함
     def append(self, arr):
         a = np.frombuffer(arr, dtype=np.int16) if isinstance(arr, (bytes, bytearray, memoryview)) else np.asarray(arr, dtype=np.int16)
         n = len(a)
@@ -93,6 +101,7 @@ class NpRing:
                 self.buf[:n-k] = a[-(n-k):]
             self.w = (self.w + n) % self.maxlen
             self.filled = min(self.maxlen, self.filled + n)
+    # 버퍼에서 AI 분석에 필요한 만큼의 가장 최신 오디오 데이터만을 꺼내옴
     def latest(self, need):
         need = int(need)
         with self.lock:
@@ -124,6 +133,7 @@ def sync_header(ser,timeout=8):
         time.sleep(0.005)
     raise RuntimeError("header not found")
 
+# 각 USB 포트마다 하나씩 생성, 백그라운드에서 EPS32-S3로부터 오디오 데이터를 끊임 없이 수신하여 NpRing 버퍼에 저장
 class SerialReader(threading.Thread):
     def __init__(self,port,idx,maxlen_s=4):
         super().__init__(daemon=True)
@@ -173,6 +183,7 @@ def post_weight_three(three, x16k, sr=16000):
     s_o=p_o; s=s_h+s_v+s_o+1e-9
     return {'human':s_h/s,'vehicle':s_v/s,'other':s_o/s}
 
+# 실제 AI 분류 총괄
 def classify_label(sig_i16, sr_src, yam):
     x = sig_i16.astype(np.float32)/32768.0
     if sr_src!=yam.sr: x = resample_poly(x, yam.sr, sr_src)
@@ -189,6 +200,7 @@ def classify_label(sig_i16, sr_src, yam):
     three = post_weight_three(three, pad, sr=yam.sr)
     return max(three.items(), key=lambda kv: kv[1])[0]
 
+# GPIO 초기화 (BCM 모드로 설정, 모든 핀을 출력 모드로 설정)
 def init_gpio():
     GPIO.setmode(GPIO.BCM)
     for p in PINS.values():
