@@ -223,37 +223,52 @@ def drive_outputs(front, back, left, right):
     _set_pair(PINS["right_red"], PINS["right_blue"], right)
     _set_pair(PINS["back_red"],  PINS["back_blue"],  back)
 
-def cleanup():
-    GPIO.cleanup()
-
 def main():
-    ports=sys.argv[1:] if len(sys.argv)>1 else discover_ports(2)
-    if len(ports)<2: print("need 2 ports"); sys.exit(1)
-    r0=SerialReader(ports[0],0); r1=SerialReader(ports[1],1)
-    r0.start(); r1.start()
-    while not (r0.ok and r1.ok): time.sleep(0.01)
-    if r0.sr!=r1.sr: print("sample rates mismatch"); sys.exit(1)
-    sr=r0.sr; yam=YAMNet()
-    win_src=int(np.ceil((yam.need//2)*(sr/float(yam.sr))))
-    init_gpio()
-    last_print=time.time()
+    # 시리얼 통신 설정
+    ports=sys.argv[1:] if len(sys.argv)>1 else discover_ports(2) # 사용할 USB 포트 결정
+    if len(ports)<2: print("need 2 ports"); sys.exit(1) # 포트 개수가 2개가 아니라면 종료
+    r0=SerialReader(ports[0],0); r1=SerialReader(ports[1],1) # r0은 ports[0] 포트에서, r1은 ports[1] 포트에서 시리얼 통신으로 데이터 수신(스레드)
+    r0.start(); r1.start() # 시리얼 데이터 수신 시작
+    while not (r0.ok and r1.ok): time.sleep(0.01) # r0, r1이 정상적으로 수신 준비될 때까지 대기
+    if r0.sr!=r1.sr: print("sample rates mismatch"); sys.exit(1) # 샘플링 속도가 다르면 종료
+
+    # AI 추론 시작
+    sr=r0.sr; yam=YAMNet() # 샘플링 레이트 초기화 및 AI 모델을 메모리로 로드함
+    win_src=int(np.ceil((yam.need//2)*(sr/float(yam.sr)))) # 최소 오디오 데이터 길이(yam.need)를 바탕으로 분석에 사용할 오디오 데이터 길이 계산
+
+    init_gpio() # GPIO 초기화
+    last_print=time.time() # 마지막 상태 출력 시각을 저장할 last_print 변수를 현재 시각으로 초기화
+    
     try:
         while True:
+            # r0, r1의 NpRing 버퍼에서 분석에 필요한 만큼의 최신 오디오 데이터를 꺼내 chL, chR, chF, chB 변수에 저장
             chL=r0.A.latest(win_src); chR=r0.B.latest(win_src); chF=r1.A.latest(win_src); chB=r1.B.latest(win_src)
+            
+            # 네 개의 채널 중 하나라도 분석에 필요한 만큼의 데이터가 없으면 0.005초 대기 후 처음부터 다시 시도
             if any(v is None for v in [chL,chR,chF,chB]):
                 time.sleep(0.005); continue
+            
+            # 네 개의 채널 각각에 대해 AI 분류 수행
             left=classify_label(chL,sr,yam)
             right=classify_label(chR,sr,yam)
             front=classify_label(chF,sr,yam)
             back=classify_label(chB,sr,yam)
+
+            # 분류 결과에 따라 GPIO 핀 제어
             drive_outputs(front, back, left, right)
-            now=time.time()
+            
+            now=time.time() # 현재 시각을 now 변수에 저장
+
+            # 터미널에 결과를 0.5초가 지났을 때만 출력해서 결과를 천천히 출력
             if now-last_print>0.5:
                 print(f"front:{front} back:{back} left:{left} right:{right}")
                 last_print=now
-            time.sleep(0.005)
+
+            time.sleep(0.005) # 0.005초 대기
+
+    # Ctrl+C 입력 시 실행
     finally:
-        cleanup()
+        GPIO.cleanup() # GPIO 핀 초기화
 
 if __name__=="__main__":
     main()
