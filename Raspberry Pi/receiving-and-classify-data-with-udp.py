@@ -7,7 +7,10 @@ import threading
 import socket
 import numpy as np
 from scipy.signal import resample_poly, butter, lfilter
-import RPi.GPIO as GPIO
+
+# 네오픽셀 제어 모듈 포함
+import board
+import neopixel
 
 try:
     import tflite_runtime.interpreter as tflite
@@ -37,16 +40,30 @@ LOW_BAND = (50, 400)
 MID_BAND = (300, 3000)
 WEIGHT_K = 0.35
 
-PINS = {
-    "left_red": 17,
-    "left_blue": 27,
-    "front_red": 22,
-    "front_blue": 23,
-    "right_red": 24,
-    "right_blue": 25,
-    "back_red": 5,
-    "back_blue": 12,
-}
+# 네오픽셀 설정
+PIXELS_PER_RING = 15 # 네오픽셀 1개당 LED 수
+COLOR_RED = (255, 0, 0)
+COLOR_BLUE = (0, 0, 255)
+COLOR_OFF = (0, 0, 0)
+
+# 네오픽셀별 핀 번호 설정
+LEFT_RING_PIN = board.D4
+FRONT_RING_PIN = board.D17
+RIGHT_RING_PIN = board.D27
+BACK_RING_PIN = board.D22
+
+# 네오픽셀 초기화 실행
+try:
+    rings = [
+        neopixel.NeoPixel(LEFT_RING_PIN, PIXELS_PER_RING, auto_write = False),
+        neopixel.NeoPixel(FRONT_RING_PIN, PIXELS_PER_RING, auto_write = False),
+        neopixel.NeoPixel(RIGHT_RING_PIN, PIXELS_PER_RING, auto_write = False),
+        neopixel.NeoPixel(BACK_RING_PIN, PIXELS_PER_RING, auto_write = False)
+    ]
+    print("네오픽셀 초기화 완료")
+except Exception as e:
+    print(f"네오픽셀 초기화 실패: {e}")
+    exit()
 
 def _is_tflite(p):
     try:
@@ -186,7 +203,7 @@ def post_weight_three(three, x16k, sr = 16000):
     s_o = p_o; s = s_h + s_v + s_o + 1e-9
     return {'human': s_h / s, 'vehicle': s_v / s, 'other': s_o / s}
 
-# 실제 AI 분류 총괄
+# sig_i16에 오디오 데이터를, sr_src에 샘플링 레이트 변수를 입력받아서 실제 AI 분류 후 결과 반환
 def classify_label(sig_i16, sr_src, yam):
     x = sig_i16.astype(np.float32) / 32768.0
     if sr_src != yam.sr: x = resample_poly(x, yam.sr, sr_src)
@@ -202,29 +219,22 @@ def classify_label(sig_i16, sr_src, yam):
     three = to3(probs, yam.labels)
     three = post_weight_three(three, pad, sr=yam.sr)
     return max(three.items(), key=lambda kv: kv[1])[0]
+    # 반환 결과 예시: "human", "vehicle", "silent"
 
-# GPIO 초기화 (BCM 모드로 설정, 모든 핀을 출력 모드로 설정)
-def init_gpio():
-    GPIO.setmode(GPIO.BCM)
-    for p in PINS.values():
-        GPIO.setup(p, GPIO.OUT, initial=GPIO.LOW)
+# 네오픽셀 번호(LEFT/FRONT/RIGHT/BACK 순으로 1 2 3 4)와 color를 입력받으면 해당 네오픽셀의 색을 설정하고 켜는 함수
+def set_ring_color(ring_index, color):
+    # ring_index가 rings 배열 요소 개수보다 크거나 작지 않은지 검증
+    if 0 <= ring_index < len(rings):
+        rings[ring_index].fill(color) # neopixel.NeoPixel().fill(color) / 네오픽셀 색 설정
+        rings[ring_index].show() # 설정된 색으로 네오픽셀 점등
 
-def _set_pair(red_pin, blue_pin, label):
-    if label == "vehicle":
-        GPIO.output(red_pin, GPIO.HIGH)
-        GPIO.output(blue_pin, GPIO.LOW)
-    elif label == "human":
-        GPIO.output(red_pin, GPIO.LOW)
-        GPIO.output(blue_pin, GPIO.HIGH)
-    else:
-        GPIO.output(red_pin, GPIO.LOW)
-        GPIO.output(blue_pin, GPIO.LOW)
+def _set_pair(ring_num, label):
+    if label == "vehicle": set_ring_color(ring_num, COLOR_RED)
+    elif label == "human": set_ring_color(ring_num, COLOR_BLUE)
+    else: set_ring_color(ring_num, COLOR_OFF)
 
 def drive_outputs(front, back, left, right):
-    _set_pair(PINS["left_red"],  PINS["left_blue"],  left)
-    _set_pair(PINS["front_red"], PINS["front_blue"], front)
-    _set_pair(PINS["right_red"], PINS["right_blue"], right)
-    _set_pair(PINS["back_red"],  PINS["back_blue"],  back)
+    _set_pair(0, left); _set_pair(1, front); _set_pair(2, right); _set_pair(3, back)
 
 def main():
     # UDP 리더 생성
@@ -237,7 +247,6 @@ def main():
     yam = YAMNet() # 샘플링 레이트 초기화 및 AI 모델을 메모리로 로드함
     win_src = int(np.ceil((yam.need // 2) * (sr / float(yam.sr)))) # 최소 오디오 데이터 길이(yam.need)를 바탕으로 분석에 사용할 오디오 데이터 길이 계산
 
-    init_gpio() # GPIO 초기화
     last_print = time.time() # 마지막 상태 출력 시각을 저장할 last_print 변수를 현재 시각으로 초기화
 
     try:
@@ -246,14 +255,14 @@ def main():
             chF = reader.F.latest(win_src); chB = reader.B.latest(win_src); chL = reader.L.latest(win_src); chR = reader.R.latest(win_src)
 
             # 네 개의 채널 중 하나라도 분석에 필요한 만큼의 데이터가 없으면 0.005초 대기 후 처음부터 다시 시도
-            if any(v is None for v in [chL,chR,chF,chB]):
+            if any(v is None for v in [chL, chR, chF, chB]):
                 time.sleep(0.005); continue
 
-            # 네 개의 채널 각각에 대해 AI 분류 수행
-            left = classify_label(chL,sr,yam)
-            right = classify_label(chR,sr,yam)
-            front = classify_label(chF,sr,yam)
-            back = classify_label(chB,sr,yam)
+            # 네 개의 채널 각각에 대해 AI 분류 수행 (각 변수에 "vehicle", "human", "silent" 중 하나가 저장됨)
+            left = classify_label(chL, sr, yam)
+            right = classify_label(chR, sr, yam)
+            front = classify_label(chF, sr, yam)
+            back = classify_label(chB, sr, yam)
 
             # 분류 결과에 따라 GPIO 핀 제어
             drive_outputs(front, back, left, right)
@@ -269,7 +278,7 @@ def main():
 
     # Ctrl+C 입력 시 실행
     finally:
-        GPIO.cleanup() # GPIO 핀 초기화
+        for i in range(4): set_ring_color(i, COLOR_OFF) # GPIO 핀 초기화
 
 if __name__ == "__main__":
     main()
