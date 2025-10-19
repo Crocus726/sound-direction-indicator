@@ -12,7 +12,6 @@
 #define PIN_DIN 4 // I2S Data In 핀 번호 설정
 #define CHUNK 256
 
-//static const char HDR_MAGIC[] = "YAWAV1M"; // 전체 스트림의 시작 헤더
 static const char PKT_MAGIC[] = "KPAY"; // 각 데이터 패킷의 시작 헤더
 uint32_t seqL=0, seqR=0; // 패킷 순서 추적 카운터 설정
 
@@ -74,15 +73,6 @@ void setup() {
   i2s_driver_install(I2S_PORT, &cfg, 0, NULL);
   i2s_set_pin(I2S_PORT, &pins);
   i2s_zero_dma_buffer(I2S_PORT);
-
-  /* 시리얼 헤더 전송 필요 없음
-  Serial.write((const uint8_t*)HDR_MAGIC, 7); // 스트림 시작 헤더 전송
-  uint32_t sr_le = SR; // 설정한 샘플링 레이트 정보를 전송함
-  uint8_t hdr[5];
-  memcpy(hdr, &sr_le, 4);
-  hdr[4] = 2; // 채널 수(2개) 정보를 전송함
-  Serial.write(hdr, 5);
-  */
 }
 
 static inline int16_t conv32to16(int32_t v){
@@ -110,17 +100,6 @@ void loop() {
   uint16_t plen = (uint16_t)(nframes * sizeof(int16_t));
   uint8_t h[11];
 
-  /* 왼쪽 채널 데이터 패킷 생성 및 전송 */
-  /*
-  memcpy(h, PKT_MAGIC, 4);
-  h[4] = 0;
-  h[5] = (uint8_t)(plen & 0xFF);
-  h[6] = (uint8_t)(plen >> 8);
-  memcpy(&h[7], &seqL, 4);
-  Serial.write(h, 11);
-  Serial.write((uint8_t*)L, plen);
-  seqL++;
-  */
   memcpy(h, PKT_MAGIC, 4);
   h[4] = 0; // 채널 ID 0
   memcpy(&h[5], &plen, 2);
@@ -131,17 +110,6 @@ void loop() {
   udp.endPacket();
   seqL++;
 
-  /* 오른쪽 채널 데이터 패킷 생성 및 전송(채널 ID를 다르게 함) */
-  /*
-  memcpy(h, PKT_MAGIC, 4);
-  h[4] = 1;
-  h[5] = (uint8_t)(plen & 0xFF);
-  h[6] = (uint8_t)(plen >> 8);
-  memcpy(&h[7], &seqR, 4);
-  Serial.write(h, 11);
-  Serial.write((uint8_t*)R, plen);
-  seqR++;
-  */
   memcpy(h, PKT_MAGIC, 4);
   h[4] = 1; // 채널 ID 1
   memcpy(&h[5], &plen, 2);
