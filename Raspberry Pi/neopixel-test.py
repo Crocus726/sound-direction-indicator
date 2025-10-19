@@ -1,3 +1,9 @@
+'''
+Adafruit 네오픽셀 관련 모듈 설치 방법
+sudo pip3 install adafruit-circuitpython-neopixel
+sudo pip3 install rpi_ws281x
+'''
+
 import time
 import board
 import neopixel
