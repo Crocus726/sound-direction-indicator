@@ -18,13 +18,13 @@ except ModuleNotFoundError:
     import tensorflow.lite as tflite
 
 # UDP 통신 관련 설정
-UDP_PORT = 115 # UDP 통신 포트 번호
+UDP_PORT = 12345 # UDP 통신 포트 번호
 PKT_MAGIC = b"KPAY" # 각 데이터 패킷 시작 헤더
 
 # ESP32 IP DHCP 할당 후 입력
 ESP32_IPS = {
-    "front_back_esp32_ip": "10.168.163.000",
-    "left_right_esp32_ip": "10.168.163.000"
+    "front_back_esp32_ip": "10.136.164.129",
+    "left_right_esp32_ip": "10.136.164.221"
 }
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -41,29 +41,29 @@ MID_BAND = (300, 3000)
 WEIGHT_K = 0.35
 
 # 네오픽셀 설정
-PIXELS_PER_RING = 15 # 네오픽셀 1개당 LED 수
+NEOPIXEL_PIN = board.D24
+NUM_PIXELS = 40
 COLOR_RED = (255, 0, 0)
 COLOR_BLUE = (0, 0, 255)
 COLOR_OFF = (0, 0, 0)
 
-# 네오픽셀별 핀 번호 설정
-LEFT_RING_PIN = board.D4
-FRONT_RING_PIN = board.D17
-RIGHT_RING_PIN = board.D27
-BACK_RING_PIN = board.D22
-
 # 네오픽셀 초기화 실행
 try:
-    rings = [
-        neopixel.NeoPixel(LEFT_RING_PIN, PIXELS_PER_RING, auto_write = False),
-        neopixel.NeoPixel(FRONT_RING_PIN, PIXELS_PER_RING, auto_write = False),
-        neopixel.NeoPixel(RIGHT_RING_PIN, PIXELS_PER_RING, auto_write = False),
-        neopixel.NeoPixel(BACK_RING_PIN, PIXELS_PER_RING, auto_write = False)
-    ]
+    pixels = neopixel.NeoPixel(NEOPIXEL_PIN, NUM_PIXELS, auto_write = False)
     print("네오픽셀 초기화 완료")
 except Exception as e:
     print(f"네오픽셀 초기화 실패: {e}")
     exit()
+
+# start_led부터 end_led까지(숫자 인덱스 1~40) 네오픽셀 LED의 색상을 color로 설정
+def set_segment_color(start_led, end_led, color):
+    start_index = start_led - 1; end_index = end_led # 인덱스 조정(사용자는 1부터 세지만 인덱스는 0부터 시작)
+
+    # 슬라이싱을 사용하여 지정된 구역의 모든 픽셀 색상을 한 번에 변경
+    for i in range(start_index, end_index):
+        pixels[i] = color
+    
+    pixels.show() # 변경된 색상을 실제 LED에 적용
 
 def _is_tflite(p):
     try:
@@ -106,7 +106,7 @@ class NpRing:
         self.maxlen = int(maxlen)
         self.buf = np.zeros(self.maxlen, dtype=np.int16)
         self.w = 0; self.filled = 0; self.lock = threading.Lock()
-    # EPS32-S3로부터 받은 새로운 오디오 데이터 조각을 버퍼의 끝에 추가함
+    # ESP32-S3로부터 받은 새로운 오디오 데이터 조각을 버퍼의 끝에 추가함
     def append(self, arr):
         a = np.frombuffer(arr, dtype=np.int16) if isinstance(arr, (bytes, bytearray, memoryview)) else np.asarray(arr, dtype=np.int16)
         n = len(a)
@@ -170,12 +170,14 @@ class UDPReader(threading.Thread):
                 
                 # 보낸 곳의 IP 주소를 확인하여 어떤 버퍼에 넣을지 결정
                 ip_addr = addr[0]
+                # 전후 ESP32-S3로부터 온 데이터인 경우
                 if ip_addr == ESP32_IPS["front_back_esp32_ip"]:
-                    if sid == 0: self.F.append(payload)
-                    elif sid == 1: self.B.append(payload)
+                    if sid == 0: self.F.append(payload) # 채널 0을 F(front) 버퍼에 추가
+                    elif sid == 1: self.B.append(payload) # 채널 1을 B(back) 버퍼에 추가
+                # 좌우 ESP32-S3로부터 온 데이터인 경우
                 elif ip_addr == ESP32_IPS["left_right_esp32_ip"]:
-                    if sid == 0: self.L.append(payload)
-                    elif sid == 1: self.R.append(payload)
+                    if sid == 0: self.L.append(payload) # 채널 0을 L(left) 버퍼에 추가
+                    elif sid == 1: self.R.append(payload) # 채널 1을 R(right) 버퍼에 추가
             except Exception as e:
                 print(f"UDP 수신 중 에러 발생: {e}")
                 time.sleep(1)
@@ -221,21 +223,6 @@ def classify_label(sig_i16, sr_src, yam):
     return max(three.items(), key=lambda kv: kv[1])[0]
     # 반환 결과 예시: "human", "vehicle", "silent"
 
-# 네오픽셀 번호(LEFT/FRONT/RIGHT/BACK 순으로 1 2 3 4)와 color를 입력받으면 해당 네오픽셀의 색을 설정하고 켜는 함수
-def set_ring_color(ring_index, color):
-    # ring_index가 rings 배열 요소 개수보다 크거나 작지 않은지 검증
-    if 0 <= ring_index < len(rings):
-        rings[ring_index].fill(color) # neopixel.NeoPixel().fill(color) / 네오픽셀 색 설정
-        rings[ring_index].show() # 설정된 색으로 네오픽셀 점등
-
-def _set_pair(ring_num, label):
-    if label == "vehicle": set_ring_color(ring_num, COLOR_RED)
-    elif label == "human": set_ring_color(ring_num, COLOR_BLUE)
-    else: set_ring_color(ring_num, COLOR_OFF)
-
-def drive_outputs(front, back, left, right):
-    _set_pair(0, left); _set_pair(1, front); _set_pair(2, right); _set_pair(3, back)
-
 def main():
     # UDP 리더 생성
     reader = UDPReader(UDP_PORT)
@@ -258,14 +245,28 @@ def main():
             if any(v is None for v in [chL, chR, chF, chB]):
                 time.sleep(0.005); continue
 
-            # 네 개의 채널 각각에 대해 AI 분류 수행 (각 변수에 "vehicle", "human", "silent" 중 하나가 저장됨)
+            # 네 개의 채널 각각에 대해 AI 분류 수행, 각 변수에 "vehicle", "human", "silent" 중 하나 저장
             left = classify_label(chL, sr, yam)
             right = classify_label(chR, sr, yam)
             front = classify_label(chF, sr, yam)
             back = classify_label(chB, sr, yam)
 
             # 분류 결과에 따라 GPIO 핀 제어
-            drive_outputs(front, back, left, right)
+            if left == "vehicle": set_segment_color(1, 10, COLOR_RED)
+            elif left == "human": set_segment_color(1, 10, COLOR_BLUE)
+            else: set_segment_color(1, 10, COLOR_OFF)
+
+            if front == "vehicle": set_segment_color(11, 20, COLOR_RED)
+            elif front == "human": set_segment_color(11, 20, COLOR_BLUE)
+            else: set_segment_color(11, 20, COLOR_OFF)
+
+            if right == "vehicle": set_segment_color(21, 30, COLOR_RED)
+            elif right == "human": set_segment_color(21, 30, COLOR_BLUE)
+            else: set_segment_color(21, 30, COLOR_OFF)
+
+            if back == "vehicle": set_segment_color(31, 40, COLOR_RED)
+            elif back == "human": set_segment_color(31, 40, COLOR_BLUE)
+            else: set_segment_color(31, 40, COLOR_OFF)
 
             now = time.time() # 현재 시각을 now 변수에 저장
 
@@ -278,7 +279,10 @@ def main():
 
     # Ctrl+C 입력 시 실행
     finally:
-        for i in range(4): set_ring_color(i, COLOR_OFF) # GPIO 핀 초기화
+        # 프로그램 종료 시 모든 네오픽셀 LED 종료
+        print("네오픽셀 연결 해제")
+        pixels.fill(COLOR_OFF)
+        pixels.show()
 
 if __name__ == "__main__":
     main()
