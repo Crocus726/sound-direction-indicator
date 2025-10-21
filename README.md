@@ -1,6 +1,6 @@
-# sound-direction-indicator
+# 소리 인식 기반 운전 보조 디스플레이
 
-# Raspberry Pi Setting
+# 라즈베리 파이 설정
 Python 3.11 버전의 가상환경 생성
 ```
 conda create --name indicator_env python=3.11 -y
