@@ -7,30 +7,37 @@
 
 #define SR 16000 // 소리의 샘플링 레이트
 #define I2S_PORT I2S_NUM_0
-#define PIN_BCLK 5 // I2S Bit Clock 핀 번호 설정
-#define PIN_LRCLK 6 // I2S Left/Right Clock 핀 번호 설정
-#define PIN_DIN 4 // I2S Data In 핀 번호 설정
+#define INMP441_SD_PIN 4 // INMP441의 SD가 연결된 핀 번호
+#define INMP441_SCK_PIN 5 // INMP441의 SCK가 연결된 핀 번호
+#define INMP441_WS_PIN 6 // INMP441의 WS가 연결된 핀 번호
 #define CHUNK 256
 
 static const char PKT_MAGIC[] = "KPAY"; // 각 데이터 패킷의 시작 헤더
 uint32_t seqL=0, seqR=0; // 패킷 순서 추적 카운터 설정
 
-/* Wi-Fi 통신 설정(SSID, PASSWD) */
+/* Wi-Fi 설정(ESP32가 접속할 Wi-Fi AP의 SSID, PASSWD) */
 const char* ssid = "revegebox";
 const char* password = "revegebox1";
 
-/* Wi-Fi 통신 설정(IP, PORT) */
-const char* host = "10.168.163.41"; // 핫스팟으로부터 라즈베리 파이가 할당받은 IP
-const uint16_t port = 115;
+/* Wi-Fi 설정(ESP32가 UDP 통신으로 데이터를 보낼 IP, PORT) */
+const char* host = "10.136.164.41"; // 핫스팟으로부터 라즈베리 파이가 할당받은 IP
+const uint16_t port = 12345;
 
-WiFiUDP udp; // UDP 통신 객체 설
+/* Wi-Fi 설정(IP 수동 할당에 필요한 정보) */
+IPAddress local_IP(10, 136, 164, 221);
+IPAddress gateway(10, 136, 164, 85);
+IPAddress subnet(255, 255, 255, 0);
+
+WiFiUDP udp; // UDP 통신 객체 설정
 
 void setup() {
   Serial.begin(9600); // 시리얼 통신을 시작함(디버깅용)
 
   /* Wi-Fi 통신 설정 */
+  if (!WiFi.config(local_IP, gateway, subnet)) Serial.println("STA Failed to configure");
   WiFi.mode(WIFI_STA); // EPS32를 클라이언트로 설정
-  WiFi.begin(ssid, password); // ESP32를 설정한 Wi-Fi AP에 접속
+
+  WiFi.begin(ssid, password); // ESP32를 Wi-Fi AP에 접속
 
   /* 시리얼 통신으로 Wi-Fi 연결 상태 확인 */
   Serial.print("Connecting to Wi-Fi...");
@@ -39,8 +46,7 @@ void setup() {
     Serial.print(".");
   }
   Serial.println(" Connected!");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP()); // DHCP로 할당받은 IP 주소 확인
+  Serial.print("IP address: "); Serial.println(WiFi.localIP()); // 할당받은 IP 주소 확인
 
   /* I2S 통신 설정 */
   i2s_config_t cfg = {
@@ -63,10 +69,10 @@ void setup() {
 
   /* I2S 핀 설정 */
   i2s_pin_config_t pins = {
-    .bck_io_num = PIN_BCLK,
-    .ws_io_num = PIN_LRCLK,
+    .bck_io_num = INMP441_SCK_PIN,
+    .ws_io_num = INMP441_WS_PIN,
     .data_out_num = -1,
-    .data_in_num = PIN_DIN
+    .data_in_num = INMP441_SD_PIN
   };
 
   /* I2S 드라이버를 설치하고 핀을 연결함 */
@@ -75,7 +81,7 @@ void setup() {
   i2s_zero_dma_buffer(I2S_PORT);
 }
 
-static inline int16_t conv32to16(int32_t v){
+static inline int16_t conv32to16(int32_t v) {
   return (int16_t)(v >> 14);
 }
 
@@ -90,9 +96,9 @@ void loop() {
   int nframes = nread / (int)sizeof(int32_t) / 2; // 프레임 수 계산
   if (nframes <= 0) return;
   static int16_t L[CHUNK], R[CHUNK];
-  for (int i=0;i<nframes;i++){
-    int32_t l = ibuf[2*i+0]; // 짝수 인덱스 = 왼쪽 채널
-    int32_t r = ibuf[2*i+1]; // 홀수 인덱스 = 오른쪽 채널
+  for (int i = 0; i < nframes; i++){
+    int32_t l = ibuf[2 * i + 0]; // 짝수 인덱스 = 왼쪽 채널
+    int32_t r = ibuf[2 * i + 1]; // 홀수 인덱스 = 오른쪽 채널
     L[i] = conv32to16(l); // 32비트를 16비트로 변환
     R[i] = conv32to16(r); // 32비트를 16비트로 변환
   }
