@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "driver/i2s.h" // INMP441↔ESP32 통신에 I2S 프로토콜을 사용하기 위한 라이브러리
+#include <Adafruit_NeoPixel.h> // 보드 내장 LED 제어 라이브러리 포함
 
 /* Wi-Fi 통신에 필요한 라이브러리 포함 */
 #include <WiFi.h>
@@ -11,6 +12,10 @@
 #define INMP441_SCK_PIN 5 // INMP441의 SCK가 연결된 핀 번호
 #define INMP441_WS_PIN 6 // INMP441의 WS가 연결된 핀 번호
 #define CHUNK 256
+
+#define LED_PIN 48
+#define LED_COUNT 1
+Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 static const char PKT_MAGIC[] = "KPAY"; // 각 데이터 패킷의 시작 헤더
 uint32_t seqL=0, seqR=0; // 패킷 순서 추적 카운터 설정
@@ -29,9 +34,15 @@ IPAddress gateway(10, 136, 164, 85);
 IPAddress subnet(255, 255, 255, 0);
 
 WiFiUDP udp; // UDP 통신 객체 설정
+bool wasConnected = false; // Wi-Fi 연결 상태 저장 변수
 
 void setup() {
   Serial.begin(9600); // 시리얼 통신을 시작함(디버깅용)
+
+  pixels.begin(); // NeoPixel 라이브러리 초기화
+  pixels.setBrightness(255); // 밝기 설정 (0-255)
+  pixels.setPixelColor(0, pixels.Color(128, 0, 128)); pixels.show(); // 보라색 점등
+  delay(500);
 
   /* Wi-Fi 통신 설정 */
   if (!WiFi.config(local_IP, gateway, subnet)) Serial.println("STA Failed to configure");
@@ -42,11 +53,17 @@ void setup() {
   /* 시리얼 통신으로 Wi-Fi 연결 상태 확인 */
   Serial.print("Connecting to Wi-Fi...");
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    pixels.setPixelColor(0, pixels.Color(0, 0, 255)); pixels.show(); // 파란색 점등
+    delay(250);
+    pixels.clear(); pixels.show(); // LED 끄기
+    delay(250);
     Serial.print(".");
   }
+
   Serial.println(" Connected!");
-  Serial.print("IP address: "); Serial.println(WiFi.localIP()); // 할당받은 IP 주소 확인
+  Serial.print("IP address: "); Serial.println(WiFi.localIP()); // 할당받은 IP 주소 확인  
+  pixels.setPixelColor(0, pixels.Color(0, 255, 0)); pixels.show(); // 초록색 점등
+  wasConnected = true; // Wi-Fi 연결 상태 최신화
 
   /* I2S 통신 설정 */
   i2s_config_t cfg = {
@@ -86,6 +103,25 @@ static inline int16_t conv32to16(int32_t v) {
 }
 
 void loop() {
+  /* Wi-Fi 연결 상태 확인 후, Wi-Fi 연결이 끊어져 있으면 */
+  if (WiFi.status() != WL_CONNECTED) {
+    if (wasConnected) { // 이전에 Wi-Fi 연결이 되어 있었을 경우
+      Serial.println("Wi-Fi connection lost!");
+      pixels.setPixelColor(0, pixels.Color(255, 0, 0)); pixels.show(); // 빨간색 점등
+      wasConnected = false; // Wi-Fi 연결 상태 최신화
+    }
+    delay(1000); // 1초 대기 후 재연결 시도 (자동 재연결은 WiFi 라이브러리가 처리)
+    return; // 연결될 때까지 오디오 처리 중단
+  }
+
+  /* Wi-Fi 연결 끊어졌다가 다시 연결된 경우 */
+  if (!wasConnected) { // 위 if문에서 wasConneted가 false로 저장됨
+    Serial.println("Wi-Fi reconnected!");
+    pixels.setPixelColor(0, pixels.Color(0, 255, 0)); // 초록색 점등
+    pixels.show();
+    wasConnected = true;
+  }
+
   /* I2S 버퍼에서 오디오 데이터를 읽음(INMP441) */
   static int32_t ibuf[CHUNK*2];
   size_t nread=0;
@@ -107,7 +143,7 @@ void loop() {
   uint8_t h[11];
 
   memcpy(h, PKT_MAGIC, 4);
-  h[4] = 0; // 채널 ID 0
+  h[4] = 0; // 채널 ID 0 (라즈베리 파이에서 sid로 저장)
   memcpy(&h[5], &plen, 2);
   memcpy(&h[7], &seqL, 4);
   udp.beginPacket(host, port);
@@ -117,7 +153,7 @@ void loop() {
   seqL++;
 
   memcpy(h, PKT_MAGIC, 4);
-  h[4] = 1; // 채널 ID 1
+  h[4] = 1; // 채널 ID 1 (라즈베리 파이에서 sid로 저장)
   memcpy(&h[5], &plen, 2);
   memcpy(&h[7], &seqR, 4);
   udp.beginPacket(host, port);
