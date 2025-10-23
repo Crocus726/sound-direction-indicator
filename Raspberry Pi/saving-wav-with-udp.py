@@ -112,9 +112,9 @@ def main():
     # WAV 파일 쓰기 객체 열기
     try:
         wf = wave.open(OUTPUT_FILENAME, 'wb') # 쓰기 모드('wb')로 파일 열기
-        wf.setnchannels(CHANNELS)       # 채널 수 설정 (스테레오)
-        wf.setsampwidth(SAMPLE_WIDTH)   # 샘플 당 바이트 수 설정 (16bit = 2bytes)
-        wf.setframerate(SAMPLE_RATE)    # 샘플링 레이트 설정
+        wf.setnchannels(CHANNELS) # 채널 수 설정 (스테레오)
+        wf.setsampwidth(SAMPLE_WIDTH) # 샘플 당 바이트 수 설정 (16bit = 2bytes)
+        wf.setframerate(SAMPLE_RATE) # 샘플링 레이트 설정
         print(f"오디오 녹음 시작 (파일명: {OUTPUT_FILENAME}) (종료: Ctrl+C)")
     except Exception as e:
         print(f"에러: WAV 파일을 열 수 없음 ({e})")
@@ -155,14 +155,15 @@ def main():
             if int(elapsed_time) % 5 == 0: # 5초마다 출력
                 print(f"\r녹음 진행 중... {elapsed_time:.1f}초 ({frames_written} 프레임)", end="")
 
-
     except KeyboardInterrupt:
         print("\n녹음 종료")
+
     finally:
-        # 7. 프로그램 종료 시 WAV 파일을 정상적으로 닫음 (매우 중요!)
+        # 프로그램 종료 시 WAV 파일을 정상적으로 닫음
         print(f"\nWAV 파일 닫는 중... 총 {frames_written} 프레임 저장됨")
         wf.close()
         print(f"녹음 완료: {OUTPUT_FILENAME}")
 
 if __name__ == "__main__":
     main()
+
