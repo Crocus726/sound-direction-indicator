@@ -25,20 +25,20 @@ ESP32_IPS = {
 ```
 
 # ESP32-S3 Wi-Fi 설정
-ssid = 핫스팟 Wi-Fi 이름
+ssid = 핫스팟 Wi-Fi 이름  
 password = 핫스팟 Wi-Fi 비밀번호
 ```
 const char* ssid = "Arendelle";
 const char* password = "12220621";
 ```
-host = 핫스팟이 라즈베리 파이에 부여한 IP
+host = 핫스팟이 라즈베리 파이에 부여한 IP  
 port = 라즈베리 파이 코드와 동일하게 설정(기본: 12345)
 ```
 const char* host = "111.111.111.111";
 const uint16_t port = 12345;
 ```
-local_IP = 핫스팟이 ESP32-S3에 부여할 IP(ESP32-S3의 IP를 임의 설정)
-gateway = 핫스팟 기기의 IP(핫스팟에 연결한 Windows PC 명령 프롬프트에 'ipconfig' 입력 후 나오는 '기본 게이트웨이' IP 사용)
+local_IP = 핫스팟이 ESP32-S3에 부여할 IP(ESP32-S3의 IP를 임의 설정)  
+gateway = 핫스팟 기기의 IP(핫스팟에 연결한 Windows PC 명령 프롬프트에 'ipconfig' 입력 후 나오는 '기본 게이트웨이' IP 사용)  
 subnet = (255, 255, 255, 0)으로 고정
 ```
 IPAddress local_IP(111, 111, 111, 111);
