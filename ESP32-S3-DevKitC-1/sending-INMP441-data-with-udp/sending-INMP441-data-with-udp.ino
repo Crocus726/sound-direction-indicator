@@ -13,7 +13,7 @@
 #define INMP441_WS_PIN 6 // INMP441의 WS가 연결된 핀 번호
 #define CHUNK 256
 
-#define LED_PIN 48
+#define LED_PIN 38
 #define LED_COUNT 1
 Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
@@ -162,3 +162,4 @@ void loop() {
   udp.endPacket();
   seqR++;
 }
+
